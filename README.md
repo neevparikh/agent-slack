@@ -138,24 +138,12 @@ agent-slack auth test
 
 ## Agent attribution (mandatory message suffix)
 
-Every message sent through `agent-slack` is automatically suffixed with an attribution marker so recipients can tell that an LLM agent — not the human whose token signed the request — wrote the text. The marker is appended at the API boundary, so it covers `message send`, `message edit`, `message draft`, file uploads (`--attach`), and `--blocks` payloads alike.
+Every message sent through `agent-slack` is automatically suffixed with `_(sent via agent-slack)_` (Slack mrkdwn italics on its own line) so recipients can tell that an LLM agent — not the human whose token signed the request — wrote the text. The marker is appended at the API boundary, so it covers `message send`, `message edit`, `message draft`, file uploads (`--attach`), and `--blocks` payloads alike.
 
-- **Default suffix**: `_(sent via agent-slack)_` on its own line (Slack mrkdwn italics).
 - **For Block Kit messages** (`--blocks`), the marker is appended as a trailing `context` block (Block Kit ignores the `text` fallback for in-channel rendering).
 - **Idempotent**: editing a message that already carries the marker does not append a second copy.
 
-### Configuring the suffix
-
-Override the text via the `AGENT_SLACK_MESSAGE_SUFFIX` environment variable:
-
-```bash
-export AGENT_SLACK_MESSAGE_SUFFIX=$'\n— posted by my-agent'
-agent-slack message send "#general" "hello"
-```
-
-Setting `AGENT_SLACK_MESSAGE_SUFFIX=""` (explicit empty string) disables the marker entirely. Only use this for `xoxb-` bot tokens, where the bot's own identity already signals non-human authorship — under `xoxc-` (browser) or `xoxp-` (user) tokens, disabling attribution means agent-authored text will be indistinguishable from messages written by you.
-
-There is intentionally no per-message CLI flag to override or disable the suffix; configuration must be set explicitly via the env var so it can't be silently bypassed inside an automated pipeline.
+The suffix is intentionally **not** configurable at runtime — there is no env var override and no per-message CLI flag. Allowing either would make attribution skippable inside automated pipelines, which defeats the purpose. Changing the marker text requires editing `src/slack/append-agent-suffix.ts` and re-shipping.
 
 ## Targets: URL or channel
 

@@ -4,15 +4,21 @@ Run `agent-slack --help` (or `agent-slack <command> --help`) for the full option
 
 ## Auth
 
-- `agent-slack auth whoami` — show configured workspaces + token sources (secrets redacted)
-- `agent-slack auth test [--workspace <url-or-unique-substring>]` — verify credentials (`auth.test`)
-- `agent-slack auth import-desktop` — import browser-style creds from Slack Desktop (macOS/Windows)
-- `agent-slack auth import-chrome` — import creds from Chrome (macOS)
-- `agent-slack auth import-firefox` — import creds from Firefox profile storage (macOS/Linux)
-- `agent-slack auth parse-curl` — read a copied Slack cURL command from stdin and save creds
-- `agent-slack auth add --workspace-url <url> [--token <xoxb/xoxp> | --xoxc <xoxc> --xoxd <xoxd>]`
+In-policy commands:
+
+- `agent-slack auth whoami` — show configured workspaces in `credentials.json` (secrets redacted). Does NOT reflect the active env-var token.
+- `agent-slack auth test [--workspace <url-or-unique-substring>]` — verify the live token by calling Slack `auth.test`. This is the authoritative identity check.
+- `agent-slack auth add --workspace-url <url> --token <xoxp-...-or-xoxb-...>` — persist a standard OAuth token. **Never pass `--xoxc`/`--xoxd`.**
 - `agent-slack auth set-default <workspace-url>`
 - `agent-slack auth remove <workspace-url>`
+
+Out-of-policy in this fork (do not invoke — they extract live Slack session credentials):
+
+- `agent-slack auth import-desktop`
+- `agent-slack auth import-chrome`
+- `agent-slack auth import-brave`
+- `agent-slack auth import-firefox`
+- `agent-slack auth parse-curl`
 
 ## Messages / threads
 
@@ -49,15 +55,7 @@ Run `agent-slack --help` (or `agent-slack <command> --help`) for the full option
     - `--resolve-users` (attach resolved user profiles in `referenced_users`)
     - `--refresh-users` (implies `--resolve-users` and forces a cache refresh)
 
-- `agent-slack message draft <target> [text]`
-  - Opens a Slack-like WYSIWYG editor in the browser for composing and sending a message.
-  - Formatting toolbar: bold, italic, strikethrough, links, numbered/bulleted lists, quotes, inline code, code blocks.
-  - Toggle between rich-text editing and raw mrkdwn source view.
-  - After sending, shows a "View in Slack" permalink to the posted message.
-  - If `<target>` is a Slack message URL, the draft will reply in that thread.
-  - Options:
-    - `--workspace <url-or-unique-substring>` (needed for channel _names_ across multiple workspaces)
-    - `--thread-ts <seconds>.<micros>` (optional, channel mode only)
+- `agent-slack message draft <target> [text]` — **out-of-policy in this fork.** Spins up an unauthenticated local HTTP server on `127.0.0.1` for the editor, which is exploitable by any page the operator's browser visits during the 30-minute listen window. `CI=1` is expected to be set in this posture, which short-circuits the command. Do not invoke; use `message send` instead.
 
 - `agent-slack message send <target> [text]`
   - If `<target>` is a Slack message URL, replies in that message’s thread.
@@ -100,9 +98,8 @@ Run `agent-slack --help` (or `agent-slack <command> --help`) for the full option
   - Returns one page and optional `next_cursor`; pass `--cursor` to continue.
 - `agent-slack channel new --name <name> [--private] [--workspace <url-or-unique-substring>]`
 - `agent-slack channel invite --channel <id|name> --users "<U...,@handle,email,...>" [--workspace <url-or-unique-substring>]`
-  - Internal invite (default): resolves users (`U...`, `@handle`, `handle`, `email`) and uses `conversations.invite`
-  - External invite: add `--external` (email targets only) to use `conversations.inviteShared`
-  - Optional: `--allow-external-user-invites` sets `external_limited=false` for external invites
+  - Internal invite (default): resolves users (`U...`, `@handle`, `handle`, `email`) and uses `conversations.invite`.
+  - **External Slack Connect invites (`--external`, `--allow-external-user-invites`) are out-of-policy in this fork.** Surface the request to the operator instead of running it.
 - `agent-slack channel mark <target> [--ts <seconds>.<micros>] [--workspace <url-or-unique-substring>]`
   - Marks a channel/DM as read up to the given message timestamp (`conversations.mark`)
   - URL target extracts channel, ts, and workspace automatically; `--ts` optionally overrides the URL timestamp; `--workspace` is rejected

@@ -25,11 +25,22 @@ description: |
 
 ## Installation
 
-If `agent-slack` is not found on `$PATH`, install it:
+If `agent-slack` is not found on `$PATH`, install it (pin a reviewed version; do not auto-update):
 
-- `curl -fsSL https://raw.githubusercontent.com/stablyai/agent-slack/main/install.sh | sh` (recommended)
-- `npm i -g agent-slack` (requires Node >= 22.5)
-- `nix run github:stablyai/agent-slack -- <args>` (no install needed, prefix all commands)
+- `npm i -g agent-slack@<pinned-version>` (requires Node >= 22.5) — recommended
+- `nix run github:stablyai/agent-slack/<pinned-rev> -- <args>` (no install needed, prefix all commands)
+
+Do **not** use the `curl | sh` installer or `agent-slack update` in this posture; the auto-update path's trust root is the upstream GitHub Releases page, which is out-of-scope for this hardened deployment.
+
+## Hardened posture (read this first)
+
+This fork is configured for the **minimum-blast-radius** auth model. Do not deviate from these constraints unless the operator explicitly relaxes them:
+
+- **No Slack session-token extraction.** The `auth import-desktop`, `auth import-chrome`, `auth import-brave`, `auth import-firefox`, and `auth parse-curl` commands are out-of-policy. Do not invoke them, even if the README suggests them.
+- **No browser tokens.** `SLACK_TOKEN=xoxc-...` paired with `SLACK_COOKIE_D=xoxd-...` is out-of-policy. Only `xoxp-` (user) or `xoxb-` (bot) OAuth tokens are accepted.
+- **`CI=1` is expected to be set.** This disables the unauthenticated local HTTP draft listener. Therefore, `message draft` will fail and must not be used (see the "Drafting" section below).
+- **Tokens come from the macOS Keychain**, surfaced into `SLACK_TOKEN` at command time. Never paste a token into a message, log, file, or shell history.
+- **Attribution suffix is mandatory and not configurable.** Every message agent-slack sends is suffixed with `_(sent via agent-slack)_`; there is no env var or CLI flag to disable or change it.
 
 ## CRITICAL: Bash command formatting rules
 
@@ -47,50 +58,46 @@ Claude Code's permission checker has security heuristics that force manual appro
 
 ## Quick start (auth)
 
-Authentication is automatic on macOS and Windows (Slack Desktop first, then Chrome/Firefox fallbacks on macOS).
+Token preference, in order:
 
-If credentials aren’t available, run one of:
+1. **`xoxp-` user token (preferred default).** A scoped, revocable OAuth grant in the user's identity. Covers the full feature surface — including `search.*`, `unreads`, `later`, `canvas`, and the workflow endpoints, which Slack restricts to user tokens. Scope minimally; actions appear in audit logs as the granting user.
+2. **`xoxb-` bot token.** Use only when the workflow is safe to run as a separate bot identity AND the operations needed are bot-callable (excludes `search.*`, `unreads`, `later`, `canvas`, `workflow run` against most triggers, and the draft editor). Bots can only see channels they are explicitly invited to.
 
-- Slack Desktop import (macOS/Windows):
+Both come from a real Slack-app OAuth install — never from session extraction.
+
+### Loading a token from Keychain
 
 ```bash
-agent-slack auth import-desktop
 agent-slack auth test
 ```
 
-- Chrome fallback:
+The operator's shell is expected to export `SLACK_TOKEN` from the macOS Keychain, e.g.:
 
 ```bash
-agent-slack auth import-chrome
-agent-slack auth test
+export SLACK_TOKEN="$(security find-generic-password -a "$USER" -s agent-slack-user-token -w)"
+unset SLACK_COOKIE_D
+export CI=1
+export AGENT_SLACK_NO_UPDATE_CHECK=1
 ```
 
-- Firefox fallback:
+If `auth test` fails with a missing/invalid token, tell the operator. Do **not** attempt to recover by running `auth import-desktop` or any other extraction command.
+
+### Multi-workspace (optional)
+
+To operate across multiple workspaces, persist tokens to the credentials store (mode `0600`) instead of switching env vars:
 
 ```bash
-agent-slack auth import-firefox
-agent-slack auth test
+agent-slack auth add --workspace-url "https://myteam.slack.com" --token "xoxp-..."
+agent-slack auth set-default "https://myteam.slack.com"
 ```
 
-- Or set env vars (browser tokens; avoid pasting these into chat logs):
+Then select per command with `--workspace` or `SLACK_WORKSPACE_URL`. Never call `auth add` with `--xoxc`/`--xoxd`.
+
+### Checking identity
 
 ```bash
-export SLACK_TOKEN="xoxc-..."
-export SLACK_COOKIE_D="xoxd-..."
-agent-slack auth test
-```
-
-- Or set a standard token:
-
-```bash
-export SLACK_TOKEN="xoxb-..."  # or xoxp-...
-agent-slack auth test
-```
-
-Check configured workspaces:
-
-```bash
-agent-slack auth whoami
+agent-slack auth whoami    # reflects ~/.config/agent-slack/credentials.json only (not the env var)
+agent-slack auth test      # calls Slack auth.test; this is the real "who am I right now"
 ```
 
 ## Canonical workflow (given a Slack message URL)
@@ -126,15 +133,11 @@ When using `--with-reaction` or `--without-reaction`, you must also pass `--olde
 
 `message get/list` and `search` auto-download attachments and include file metadata in JSON output (typically under `message.files[]` / `files[]`), including `name` when available and `path` for the local download. Failed message attachment downloads keep the attachment entry, preserve a local `.download-error.txt` path, and include `message.files[].error` for `message get/list` or `messages[].files[].error` for `search messages|all`; `search files` skips files whose download fails.
 
-## Draft a message (browser editor)
+## Draft a message (DISABLED in this posture)
 
-Opens a Slack-like rich-text editor in the browser for composing messages with formatting toolbar (bold, italic, strikethrough, links, lists, quotes, code, code blocks). After sending, shows a "View in Slack" link.
+The `agent-slack message draft` command spins up a local unauthenticated HTTP listener on `127.0.0.1` for up to 30 minutes; any page the operator's browser visits during that window can post Slack messages as them (no CSRF protection). Because `CI=1` is set in this posture, the command will short-circuit and refuse to start the listener.
 
-```bash
-agent-slack message draft "general"
-agent-slack message draft "general" "initial text"
-agent-slack message draft "https://workspace.slack.com/archives/C123/p1700000000000000"
-```
+If the operator asks for a draft-then-send workflow, send the message directly via `message send` after showing them the text for confirmation in chat — do not try to launch the draft editor.
 
 ## Send, edit, delete, or react
 
@@ -176,15 +179,9 @@ Mentions: just write `@U05BRPTKL6A`, `@here`, `@channel`, or `@everyone` — the
 
 ## Mandatory agent attribution
 
-Every message you send through `agent-slack` is automatically suffixed with `_(sent via agent-slack)_` (Slack mrkdwn italics on a new line) so recipients can tell an LLM agent wrote the text rather than the human whose token signed the request. The marker is applied at the API boundary, so it covers `message send`, `message edit`, `message draft`, file uploads via `--attach` (injected into `initial_comment`), and `--blocks` payloads (appended as a trailing `context` block). The marker is idempotent — editing an already-suffixed message does not double-append.
+Every message you send through `agent-slack` is automatically suffixed with `_(sent via agent-slack)_` (Slack mrkdwn italics on a new line) so recipients can tell an LLM agent wrote the text rather than the human whose token signed the request. The marker is applied at the API boundary, so it covers `message send`, `message edit`, file uploads via `--attach` (injected into `initial_comment`), and `--blocks` payloads (appended as a trailing `context` block). The marker is idempotent — editing an already-suffixed message does not double-append.
 
-Override the suffix text with the `AGENT_SLACK_MESSAGE_SUFFIX` env var:
-
-```bash
-export AGENT_SLACK_MESSAGE_SUFFIX=$'\n— posted by my-agent'
-```
-
-Setting it to the empty string disables attribution; only do this for `xoxb-` bot tokens, where the bot identity already signals non-human authorship. There is no per-message CLI flag to disable the suffix.
+The suffix is **not configurable at runtime**: there is no env var override (`AGENT_SLACK_MESSAGE_SUFFIX` has no effect — it was removed) and no per-message CLI flag. This is deliberate so attribution cannot be silently bypassed inside an automated pipeline. Do not attempt to disable or alter the suffix; if a workflow truly needs different text, that requires a code change to `src/slack/append-agent-suffix.ts` and a code review.
 
 ## List channels + create/invite users
 
@@ -195,12 +192,9 @@ agent-slack channel list --all --limit 100
 agent-slack channel new --name "incident-war-room"
 agent-slack channel new --name "incident-leads" --private
 agent-slack channel invite --channel "incident-war-room" --users "U01AAAA,@alice,bob@example.com"
-agent-slack channel invite --channel "incident-war-room" --users "partner@vendor.com" --external
-agent-slack channel invite --channel "incident-war-room" --users "partner@vendor.com" --external --allow-external-user-invites
 ```
 
-For `--external`, invite targets must be emails. By default, invitees are external-limited; add
-`--allow-external-user-invites` to allow them to invite other users.
+**External Slack Connect invites (`--external` / `--allow-external-user-invites`) are out-of-policy in this posture** — they expand identity to people outside the workspace under the operator's name. If an external invite is genuinely required, surface the request to the operator in chat and let them run it manually.
 
 ## Search (messages + files)
 
@@ -212,6 +206,8 @@ agent-slack search messages "stably test" --user "@alice" --channel general
 agent-slack search messages "stably test" --resolve-users
 agent-slack search files "testing" --content-type snippet --limit 10
 ```
+
+`search.*` requires a `xoxp-` user token with the `search:read` scope. With a `xoxb-` bot token Slack returns `not_allowed_token_type` and search will not work. If the operator is on a bot token and asks for a search, fall back to `agent-slack message list <channel> --limit N` and filter the JSON locally with `jq` (per the Bash formatting rules above).
 
 ## Multi-workspace guardrail (important)
 

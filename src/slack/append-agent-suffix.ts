@@ -9,20 +9,14 @@
  * boundary so no CLI path (send / edit / draft / attach / blocks) can
  * bypass it.
  *
- * Configurable via `AGENT_SLACK_MESSAGE_SUFFIX`. Setting it to the empty
- * string disables the marker — use only for bot tokens where the bot's
- * own identity already discloses non-human authorship.
+ * The suffix is intentionally **not** configurable at runtime: there is
+ * no env var override and no per-message CLI flag. Allowing an override
+ * would make the attribution skippable inside automated pipelines, which
+ * defeats the purpose. Changing the marker text requires changing this
+ * file (and getting a code review for the change).
  */
 
-const DEFAULT_SUFFIX = "\n\n_(sent via agent-slack)_";
-
-export function resolveAgentSuffix(): string {
-  const override = process.env.AGENT_SLACK_MESSAGE_SUFFIX;
-  if (override !== undefined) {
-    return override;
-  }
-  return DEFAULT_SUFFIX;
-}
+export const AGENT_SLACK_SUFFIX = "\n\n_(sent via agent-slack)_";
 
 /**
  * Append the suffix to a Slack message body. Idempotent: a body that
@@ -31,9 +25,6 @@ export function resolveAgentSuffix(): string {
  * edit-then-resend loop.
  */
 export function appendSuffixToText(text: string | undefined, suffix: string): string {
-  if (!suffix) {
-    return text ?? "";
-  }
   const base = text ?? "";
   const trimmedSuffix = suffix.trim();
   if (!trimmedSuffix) {
@@ -63,9 +54,6 @@ type ContextBlock = {
  * array is returned unchanged.
  */
 export function appendSuffixToBlocks(blocks: unknown[], suffix: string): unknown[] {
-  if (!suffix) {
-    return blocks;
-  }
   const trimmedSuffix = suffix.trim();
   if (!trimmedSuffix) {
     return blocks;
@@ -106,11 +94,8 @@ function isContextBlockWithSuffix(block: unknown, trimmedSuffix: string): boolea
 export function applyAgentSuffixToParams(
   method: string,
   params: Record<string, unknown>,
-  suffix: string = resolveAgentSuffix(),
 ): Record<string, unknown> {
-  if (!suffix) {
-    return params;
-  }
+  const suffix = AGENT_SLACK_SUFFIX;
   if (method === "chat.postMessage" || method === "chat.update") {
     const out: Record<string, unknown> = { ...params };
     const hasBlocks = Array.isArray(params.blocks);

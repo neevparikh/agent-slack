@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { SlackApiClient } from "../src/slack/client.ts";
 
 const DEFAULT_SUFFIX = "\n\n_(sent via agent-slack)_";
@@ -43,23 +43,12 @@ function mockFetch(responseBody: Record<string, unknown> = { ok: true }) {
 
 describe("SlackApiClient injects agent-slack suffix at the wire layer", () => {
   const originalFetch = globalThis.fetch;
-  let originalEnv: string | undefined;
-
-  beforeEach(() => {
-    originalEnv = process.env.AGENT_SLACK_MESSAGE_SUFFIX;
-    delete process.env.AGENT_SLACK_MESSAGE_SUFFIX;
-  });
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    if (originalEnv === undefined) {
-      delete process.env.AGENT_SLACK_MESSAGE_SUFFIX;
-    } else {
-      process.env.AGENT_SLACK_MESSAGE_SUFFIX = originalEnv;
-    }
   });
 
-  test("chat.postMessage text gets the default suffix appended", async () => {
+  test("chat.postMessage text gets the suffix appended", async () => {
     const { fetchMock, calls } = mockFetch();
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
@@ -149,18 +138,29 @@ describe("SlackApiClient injects agent-slack suffix at the wire layer", () => {
     expect(calls[0]?.params.get("initial_comment")).toBeNull();
   });
 
-  test("env override controls the suffix text", async () => {
-    process.env.AGENT_SLACK_MESSAGE_SUFFIX = "\n— via my-agent";
-    const { fetchMock, calls } = mockFetch();
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
+  test("AGENT_SLACK_MESSAGE_SUFFIX env var is intentionally ignored", async () => {
+    const original = process.env.AGENT_SLACK_MESSAGE_SUFFIX;
+    process.env.AGENT_SLACK_MESSAGE_SUFFIX = "";
+    try {
+      const { fetchMock, calls } = mockFetch();
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const client = new SlackApiClient(
-      { auth_type: "browser", xoxc_token: "xoxc-test", xoxd_cookie: "d" },
-      { workspaceUrl: "https://workspace.slack.com" },
-    );
-    await client.api("chat.postMessage", { channel: "C1", text: "hello" });
+      const client = new SlackApiClient(
+        { auth_type: "browser", xoxc_token: "xoxc-test", xoxd_cookie: "d" },
+        { workspaceUrl: "https://workspace.slack.com" },
+      );
+      await client.api("chat.postMessage", { channel: "C1", text: "hello" });
 
-    expect(calls[0]?.params.get("text")).toBe("hello\n— via my-agent");
+      // Setting the env var to "" must NOT disable the suffix — the
+      // hardcoded marker still lands on the wire.
+      expect(calls[0]?.params.get("text")).toBe(`hello${DEFAULT_SUFFIX}`);
+    } finally {
+      if (original === undefined) {
+        delete process.env.AGENT_SLACK_MESSAGE_SUFFIX;
+      } else {
+        process.env.AGENT_SLACK_MESSAGE_SUFFIX = original;
+      }
+    }
   });
 
   test("idempotency: re-sending a previously suffixed body does not double-append", async () => {
