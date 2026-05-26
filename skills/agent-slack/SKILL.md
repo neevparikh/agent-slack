@@ -40,7 +40,7 @@ This fork is configured for the **minimum-blast-radius** auth model. Do not devi
 - **No browser tokens.** `SLACK_TOKEN=xoxc-...` paired with `SLACK_COOKIE_D=xoxd-...` is out-of-policy. Only `xoxp-` (user) or `xoxb-` (bot) OAuth tokens are accepted.
 - **`CI=1` is expected to be set.** This disables the unauthenticated local HTTP draft listener. Therefore, `message draft` will fail and must not be used (see the "Drafting" section below).
 - **Tokens come from the macOS Keychain**, surfaced into `SLACK_TOKEN` at command time. Never paste a token into a message, log, file, or shell history.
-- **Attribution suffix is mandatory and not configurable.** Every message agent-slack sends is suffixed with `_(sent via agent-slack)_`; there is no env var or CLI flag to disable or change it.
+- **Attribution suffix is mandatory and not configurable.** New posts get `_(sent via agent-slack)_`; in-place edits get `_(edited by agent-slack)_`. There is no env var or CLI flag to disable or change either marker.
 
 ## CRITICAL: Bash command formatting rules
 
@@ -179,7 +179,14 @@ Mentions: just write `@U05BRPTKL6A`, `@here`, `@channel`, or `@everyone` — the
 
 ## Mandatory agent attribution
 
-Every message you send through `agent-slack` is automatically suffixed with `_(sent via agent-slack)_` (Slack mrkdwn italics on a new line) so recipients can tell an LLM agent wrote the text rather than the human whose token signed the request. The marker is applied at the API boundary, so it covers `message send`, `message edit`, file uploads via `--attach` (injected into `initial_comment`), and `--blocks` payloads (appended as a trailing `context` block). The marker is idempotent — editing an already-suffixed message does not double-append.
+Every write through `agent-slack` is automatically suffixed with an attribution marker so recipients can tell an LLM agent — not the human whose token signed the request — produced the text. The marker is applied at the API boundary, so it covers `message send`, `message edit`, file uploads via `--attach` (injected into `initial_comment`), and `--blocks` payloads (appended as a trailing `context` block).
+
+Two markers are used, picked based on the operation:
+
+- **`_(sent via agent-slack)_`** — `message send`, `message draft`, and `--attach` uploads.
+- **`_(edited by agent-slack)_`** — `message edit`.
+
+When you `message edit` something an agent previously sent, the original `_(sent via …)_` marker is **stripped and replaced** with `_(edited by …)_` — the two are never stacked, since after an edit the message is no longer just "sent." Re-applying the same marker (a no-op edit, or re-sending the same body) is idempotent.
 
 The suffix is **not configurable at runtime**: there is no env var override (`AGENT_SLACK_MESSAGE_SUFFIX` has no effect — it was removed) and no per-message CLI flag. This is deliberate so attribution cannot be silently bypassed inside an automated pipeline. Do not attempt to disable or alter the suffix; if a workflow truly needs different text, that requires a code change to `src/slack/append-agent-suffix.ts` and a code review.
 

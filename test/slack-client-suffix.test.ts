@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { SlackApiClient } from "../src/slack/client.ts";
 
-const DEFAULT_SUFFIX = "\n\n_(sent via agent-slack)_";
+const SEND_SUFFIX = "\n\n_(sent via agent-slack)_";
+const EDIT_SUFFIX = "\n\n_(edited by agent-slack)_";
 
 /**
  * End-to-end check that SlackApiClient.api() injects the agent-slack
@@ -59,10 +60,10 @@ describe("SlackApiClient injects agent-slack suffix at the wire layer", () => {
     await client.api("chat.postMessage", { channel: "C1", text: "hello" });
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.params.get("text")).toBe(`hello${DEFAULT_SUFFIX}`);
+    expect(calls[0]?.params.get("text")).toBe(`hello${SEND_SUFFIX}`);
   });
 
-  test("chat.update text gets the suffix appended", async () => {
+  test("chat.update text gets the EDIT marker (not the send marker)", async () => {
     const { fetchMock, calls } = mockFetch();
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
@@ -73,7 +74,26 @@ describe("SlackApiClient injects agent-slack suffix at the wire layer", () => {
     await client.api("chat.update", { channel: "C1", ts: "1.2", text: "edited" });
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.params.get("text")).toBe(`edited${DEFAULT_SUFFIX}`);
+    expect(calls[0]?.params.get("text")).toBe(`edited${EDIT_SUFFIX}`);
+  });
+
+  test("chat.update on an agent-sent message swaps 'sent via' to 'edited by'", async () => {
+    const { fetchMock, calls } = mockFetch();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const client = new SlackApiClient(
+      { auth_type: "browser", xoxc_token: "xoxc-test", xoxd_cookie: "d" },
+      { workspaceUrl: "https://workspace.slack.com" },
+    );
+    await client.api("chat.update", {
+      channel: "C1",
+      ts: "1.2",
+      text: `hello${SEND_SUFFIX}`,
+    });
+
+    const text = calls[0]?.params.get("text");
+    expect(text).toBe(`hello${EDIT_SUFFIX}`);
+    expect(text?.includes("sent via")).toBe(false);
   });
 
   test("files.completeUploadExternal gets initial_comment injected even when none was provided", async () => {
@@ -90,7 +110,7 @@ describe("SlackApiClient injects agent-slack suffix at the wire layer", () => {
     });
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.params.get("initial_comment")).toBe(DEFAULT_SUFFIX.trim());
+    expect(calls[0]?.params.get("initial_comment")).toBe(SEND_SUFFIX.trim());
   });
 
   test("--blocks payload gets a context block appended", async () => {
@@ -119,7 +139,7 @@ describe("SlackApiClient injects agent-slack suffix at the wire layer", () => {
     expect(blocks[0]).toEqual({ type: "divider" });
     expect(blocks[1]).toEqual({
       type: "context",
-      elements: [{ type: "mrkdwn", text: DEFAULT_SUFFIX.trim() }],
+      elements: [{ type: "mrkdwn", text: SEND_SUFFIX.trim() }],
     });
   });
 
@@ -153,7 +173,7 @@ describe("SlackApiClient injects agent-slack suffix at the wire layer", () => {
 
       // Setting the env var to "" must NOT disable the suffix — the
       // hardcoded marker still lands on the wire.
-      expect(calls[0]?.params.get("text")).toBe(`hello${DEFAULT_SUFFIX}`);
+      expect(calls[0]?.params.get("text")).toBe(`hello${SEND_SUFFIX}`);
     } finally {
       if (original === undefined) {
         delete process.env.AGENT_SLACK_MESSAGE_SUFFIX;
@@ -163,7 +183,7 @@ describe("SlackApiClient injects agent-slack suffix at the wire layer", () => {
     }
   });
 
-  test("idempotency: re-sending a previously suffixed body does not double-append", async () => {
+  test("idempotency: re-editing an already-edited message keeps a single EDIT marker", async () => {
     const { fetchMock, calls } = mockFetch();
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
@@ -174,9 +194,9 @@ describe("SlackApiClient injects agent-slack suffix at the wire layer", () => {
     await client.api("chat.update", {
       channel: "C1",
       ts: "1.2",
-      text: `already suffixed${DEFAULT_SUFFIX}`,
+      text: `already edited${EDIT_SUFFIX}`,
     });
 
-    expect(calls[0]?.params.get("text")).toBe(`already suffixed${DEFAULT_SUFFIX}`);
+    expect(calls[0]?.params.get("text")).toBe(`already edited${EDIT_SUFFIX}`);
   });
 });

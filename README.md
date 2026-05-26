@@ -138,10 +138,17 @@ agent-slack auth test
 
 ## Agent attribution (mandatory message suffix)
 
-Every message sent through `agent-slack` is automatically suffixed with `_(sent via agent-slack)_` (Slack mrkdwn italics on its own line) so recipients can tell that an LLM agent — not the human whose token signed the request — wrote the text. The marker is appended at the API boundary, so it covers `message send`, `message edit`, `message draft`, file uploads (`--attach`), and `--blocks` payloads alike.
+Every message that `agent-slack` writes to Slack is automatically suffixed with an attribution marker so recipients can tell that an LLM agent — not the human whose token signed the request — produced the text. The marker is appended at the API boundary, so it covers `message send`, `message edit`, `message draft`, file uploads (`--attach`), and `--blocks` payloads alike.
 
-- **For Block Kit messages** (`--blocks`), the marker is appended as a trailing `context` block (Block Kit ignores the `text` fallback for in-channel rendering).
-- **Idempotent**: editing a message that already carries the marker does not append a second copy.
+Two markers, picked based on what actually happened:
+
+- **`_(sent via agent-slack)_`** — for new posts (`message send`, `message draft`, `--attach` uploads).
+- **`_(edited by agent-slack)_`** — for in-place edits (`message edit`).
+
+When you edit a message that an agent previously sent, the existing `_(sent via …)_` marker is **stripped and replaced** with `_(edited by …)_` rather than stacked — the message is no longer just something that was sent, so the attribution should reflect the most recent action.
+
+- **For Block Kit messages** (`--blocks`), the marker is appended as a trailing `context` block (Block Kit ignores the `text` fallback for in-channel rendering). The same swap-not-stack policy applies to the trailing context block on edits.
+- **Idempotent**: re-applying the same marker (re-sending an already-sent text, re-editing an already-edited text) does not stack copies.
 
 The suffix is intentionally **not** configurable at runtime — there is no env var override and no per-message CLI flag. Allowing either would make attribution skippable inside automated pipelines, which defeats the purpose. Changing the marker text requires editing `src/slack/append-agent-suffix.ts` and re-shipping.
 
