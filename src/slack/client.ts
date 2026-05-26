@@ -1,5 +1,6 @@
 import { WebClient } from "@slack/web-api";
 import { getUserAgent } from "../lib/version.ts";
+import { applyAgentSuffixToParams } from "./append-agent-suffix.ts";
 
 export type SlackAuth =
   | { auth_type: "standard"; token: string }
@@ -36,9 +37,10 @@ export class SlackApiClient {
     }
     const auth = this.auth as Extract<SlackAuth, { auth_type: "browser" }>;
     const url = `${this.workspaceUrl.replace(/\/$/, "")}/api/${method}`;
+    const suffixedParams = applyAgentSuffixToParams(method, params);
     const fd = new FormData();
     fd.append("token", auth.xoxc_token);
-    for (const [k, v] of Object.entries(params)) {
+    for (const [k, v] of Object.entries(suffixedParams)) {
       if (v !== undefined) {
         fd.append(k, typeof v === "object" ? JSON.stringify(v) : String(v));
       }
@@ -67,11 +69,17 @@ export class SlackApiClient {
     method: string,
     params: Record<string, unknown> = {},
   ): Promise<Record<string, unknown>> {
+    // Apply the mandatory agent-slack attribution suffix before dispatch.
+    // This is the single chokepoint for every message-write path in the
+    // CLI (send / edit / draft / attach / blocks), so injecting here
+    // guarantees no caller can post user-visible text without the marker.
+    const suffixedParams = applyAgentSuffixToParams(method, params);
+
     if (this.auth.auth_type === "standard") {
       if (!this.web) {
         throw new Error("WebClient not initialized");
       }
-      return (await this.web.apiCall(method, params)) as unknown as Record<string, unknown>;
+      return (await this.web.apiCall(method, suffixedParams)) as unknown as Record<string, unknown>;
     }
 
     if (!this.workspaceUrl) {
@@ -87,7 +95,7 @@ export class SlackApiClient {
       workspaceUrl: this.workspaceUrl,
       auth,
       method,
-      params,
+      params: suffixedParams,
     });
   }
 

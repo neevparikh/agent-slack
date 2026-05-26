@@ -174,6 +174,18 @@ agent-slack message send "general" "Coverage report" --attach ./report.md
 
 Mentions: just write `@U05BRPTKL6A`, `@here`, `@channel`, or `@everyone` — the CLI converts them to real Slack mention tokens and escapes literal `&`/`<`/`>` in your text. You don't need to wrap IDs yourself.
 
+## Mandatory agent attribution
+
+Every message you send through `agent-slack` is automatically suffixed with `_(sent via agent-slack)_` (Slack mrkdwn italics on a new line) so recipients can tell an LLM agent wrote the text rather than the human whose token signed the request. The marker is applied at the API boundary, so it covers `message send`, `message edit`, `message draft`, file uploads via `--attach` (injected into `initial_comment`), and `--blocks` payloads (appended as a trailing `context` block). The marker is idempotent — editing an already-suffixed message does not double-append.
+
+Override the suffix text with the `AGENT_SLACK_MESSAGE_SUFFIX` env var:
+
+```bash
+export AGENT_SLACK_MESSAGE_SUFFIX=$'\n— posted by my-agent'
+```
+
+Setting it to the empty string disables attribution; only do this for `xoxb-` bot tokens, where the bot identity already signals non-human authorship. There is no per-message CLI flag to disable the suffix.
+
 ## List channels + create/invite users
 
 ```bash
